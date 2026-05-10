@@ -82,7 +82,7 @@ def get_city_lookup(wb):
 
 
 def is_tulsa(city):
-    return bool(city) and 'tulsa' in city.lower()
+    return bool(city) and city.lower() in ('tulsa', 'tulsa_jd')
 
 
 def clear_data_rows(ws, start_row, num_cols):
