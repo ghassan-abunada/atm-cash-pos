@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ATM Cash POS Generator</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #f0f4f8;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      background: #1a2b4a;
+      color: #fff;
+      padding: 20px 32px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.25);
+    }
+
+    header svg { flex-shrink: 0; }
+
+    header h1 {
+      font-size: 1.4rem;
+      font-weight: 700;
+      letter-spacing: -0.3px;
+    }
+
+    header p {
+      font-size: 0.8rem;
+      color: #94a8c5;
+      margin-top: 2px;
+    }
+
+    main {
+      flex: 1;
+      max-width: 760px;
+      width: 100%;
+      margin: 40px auto;
+      padding: 0 20px 40px;
+    }
+
+    .instructions {
+      background: #e8f0fb;
+      border-left: 4px solid #3b74d8;
+      border-radius: 6px;
+      padding: 14px 18px;
+      margin-bottom: 32px;
+      font-size: 0.88rem;
+      color: #2a3f6a;
+      line-height: 1.6;
+    }
+
+    .instructions strong { color: #1a2b4a; }
+
+    .uploads-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+      margin-bottom: 28px;
+    }
+
+    .upload-card {
+      background: #fff;
+      border: 2px dashed #c8d6e8;
+      border-radius: 12px;
+      padding: 20px 24px;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      position: relative;
+    }
+
+    .upload-card:hover, .upload-card.drag-over {
+      border-color: #3b74d8;
+      background: #f5f8ff;
+    }
+
+    .upload-card.has-file {
+      border-color: #22c55e;
+      border-style: solid;
+      background: #f0fdf4;
+    }
+
+    .upload-card input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+
+    .card-header {
+      display: flex;
+      align-items: flex-start;
+      gap: 14px;
+    }
+
+    .card-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+
+    .icon-blue  { background: #dbeafe; }
+    .icon-green { background: #dcfce7; }
+    .icon-amber { background: #fef9c3; }
+
+    .card-text h3 {
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #1a2b4a;
+      margin-bottom: 3px;
+    }
+
+    .card-text p {
+      font-size: 0.8rem;
+      color: #64748b;
+      line-height: 1.4;
+    }
+
+    .file-status {
+      margin-top: 10px;
+      margin-left: 56px;
+      font-size: 0.8rem;
+      color: #64748b;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .file-status.selected { color: #16a34a; }
+    .file-status .dot { width: 7px; height: 7px; border-radius: 50%; background: #d1d5db; }
+    .file-status.selected .dot { background: #22c55e; }
+
+    .btn-process {
+      width: 100%;
+      padding: 15px;
+      background: #1a2b4a;
+      color: #fff;
+      border: none;
+      border-radius: 10px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s, transform 0.1s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .btn-process:hover:not(:disabled) { background: #243d6b; }
+    .btn-process:active:not(:disabled) { transform: scale(0.99); }
+    .btn-process:disabled { background: #94a3b8; cursor: not-allowed; }
+
+    .spinner {
+      width: 20px;
+      height: 20px;
+      border: 3px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .toast {
+      margin-top: 20px;
+      padding: 14px 18px;
+      border-radius: 8px;
+      font-size: 0.88rem;
+      display: none;
+      align-items: flex-start;
+      gap: 10px;
+      line-height: 1.5;
+    }
+
+    .toast.success {
+      background: #f0fdf4;
+      border: 1px solid #86efac;
+      color: #166534;
+      display: flex;
+    }
+
+    .toast.error {
+      background: #fef2f2;
+      border: 1px solid #fca5a5;
+      color: #991b1b;
+      display: flex;
+    }
+
+    .toast svg { flex-shrink: 0; margin-top: 1px; }
+
+    .stats {
+      display: flex;
+      gap: 12px;
+      margin-top: 8px;
+    }
+
+    .stat-badge {
+      background: #dcfce7;
+      color: #166534;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    footer {
+      text-align: center;
+      padding: 16px;
+      font-size: 0.75rem;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <rect width="32" height="32" rx="8" fill="#2d5099"/>
+    <rect x="6" y="9" width="20" height="14" rx="2" fill="white" opacity="0.9"/>
+    <rect x="9" y="13" width="5" height="4" rx="1" fill="#2d5099"/>
+    <rect x="16" y="13" width="3" height="1.5" rx="0.5" fill="#2d5099"/>
+    <rect x="16" y="15.5" width="5" height="1.5" rx="0.5" fill="#2d5099"/>
+  </svg>
+  <div>
+    <h1>ATM Cash POS Generator</h1>
+    <p>Upload the two reports and your template to generate the updated Cash POS file</p>
+  </div>
+</header>
+
+<main>
+  <div class="instructions">
+    <strong>How it works:</strong> Upload the <strong>Cassette Balances</strong> report, the <strong>Cash Projection</strong> report, and your <strong>Cash POS template</strong> (with the City tab already updated). The app will merge all three and download a ready-to-use Cash POS file with all data filled in.
+  </div>
+
+  <form id="uploadForm">
+    <div class="uploads-grid">
+
+      <!-- Cassette Balances -->
+      <div class="upload-card" id="card-cassette">
+        <input type="file" name="cassette" id="file-cassette" accept=".xls,.xlsx" />
+        <div class="card-header">
+          <div class="card-icon icon-blue">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="18" rx="2"/>
+              <path d="M8 7h8M8 11h8M8 15h5"/>
+            </svg>
+          </div>
+          <div class="card-text">
+            <h3>1. Cassette Balances Report</h3>
+            <p>rptTerminalStatusCassetteBalances&hellip;.xls &mdash; shows current cash in each machine</p>
+          </div>
+        </div>
+        <div class="file-status" id="status-cassette">
+          <span class="dot"></span>
+          <span>No file selected</span>
+        </div>
+      </div>
+
+      <!-- Cash Projection -->
+      <div class="upload-card" id="card-projection">
+        <input type="file" name="projection" id="file-projection" accept=".xls,.xlsx" />
+        <div class="card-header">
+          <div class="card-icon icon-green">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
+            </svg>
+          </div>
+          <div class="card-text">
+            <h3>2. Cash Projection Report</h3>
+            <p>Vault Cash Projection Report&hellip;.xls &mdash; days until load &amp; suggested cash add</p>
+          </div>
+        </div>
+        <div class="file-status" id="status-projection">
+          <span class="dot"></span>
+          <span>No file selected</span>
+        </div>
+      </div>
+
+      <!-- Template -->
+      <div class="upload-card" id="card-template">
+        <input type="file" name="template" id="file-template" accept=".xlsm,.xlsx" />
+        <div class="card-header">
+          <div class="card-icon icon-amber">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#b45309" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+              <polyline points="14 2 14 8 20 8"/>
+              <line x1="9" y1="13" x2="15" y2="13"/>
+              <line x1="9" y1="17" x2="12" y2="17"/>
+            </svg>
+          </div>
+          <div class="card-text">
+            <h3>3. Cash POS Template</h3>
+            <p>Cash Pos template.xlsm &mdash; make sure the City tab is up to date before uploading</p>
+          </div>
+        </div>
+        <div class="file-status" id="status-template">
+          <span class="dot"></span>
+          <span>No file selected</span>
+        </div>
+      </div>
+
+    </div>
+
+    <button type="submit" class="btn-process" id="btnProcess" disabled>
+      <div class="spinner" id="spinner"></div>
+      <span id="btnText">Select all 3 files to continue</span>
+    </button>
+  </form>
+
+  <div class="toast" id="toastSuccess">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/>
+    </svg>
+    <div>
+      <strong>File downloaded successfully!</strong>
+      <div class="stats" id="statsRow"></div>
+    </div>
+  </div>
+
+  <div class="toast" id="toastError">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/>
+    </svg>
+    <span id="errorMsg"></span>
+  </div>
+</main>
+
+<footer>ATM Cash POS Generator &mdash; runs locally on your computer</footer>
+
+<script>
+  const files = { cassette: null, projection: null, template: null };
+
+  function updateCard(name, filename) {
+    const card = document.getElementById(`card-${name}`);
+    const status = document.getElementById(`status-${name}`);
+    if (filename) {
+      card.classList.add('has-file');
+      status.classList.add('selected');
+      status.innerHTML = `<span class="dot"></span><span>${filename}</span>`;
+    } else {
+      card.classList.remove('has-file');
+      status.classList.remove('selected');
+      status.innerHTML = `<span class="dot"></span><span>No file selected</span>`;
+    }
+    checkReady();
+  }
+
+  function checkReady() {
+    const ready = files.cassette && files.projection && files.template;
+    const btn = document.getElementById('btnProcess');
+    const btnText = document.getElementById('btnText');
+    btn.disabled = !ready;
+    btnText.textContent = ready ? 'Generate Cash POS File' : 'Select all 3 files to continue';
+  }
+
+  ['cassette', 'projection', 'template'].forEach(name => {
+    const input = document.getElementById(`file-${name}`);
+    input.addEventListener('change', () => {
+      files[name] = input.files[0] || null;
+      updateCard(name, files[name]?.name || null);
+    });
+
+    const card = document.getElementById(`card-${name}`);
+    card.addEventListener('dragover', e => { e.preventDefault(); card.classList.add('drag-over'); });
+    card.addEventListener('dragleave', () => card.classList.remove('drag-over'));
+    card.addEventListener('drop', e => {
+      e.preventDefault();
+      card.classList.remove('drag-over');
+      const file = e.dataTransfer.files[0];
+      if (file) {
+        const dt = new DataTransfer();
+        dt.items.add(file);
+        input.files = dt.files;
+        files[name] = file;
+        updateCard(name, file.name);
+      }
+    });
+  });
+
+  document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const btn = document.getElementById('btnProcess');
+    const spinner = document.getElementById('spinner');
+    const btnText = document.getElementById('btnText');
+    const successToast = document.getElementById('toastSuccess');
+    const errorToast = document.getElementById('toastError');
+
+    btn.disabled = true;
+    spinner.style.display = 'block';
+    btnText.textContent = 'Processing…';
+    successToast.style.display = 'none';
+    errorToast.style.display = 'none';
+
+    const formData = new FormData();
+    formData.append('cassette', files.cassette);
+    formData.append('projection', files.projection);
+    formData.append('template', files.template);
+
+    try {
+      const response = await fetch('/process', { method: 'POST', body: formData });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({ error: 'Unknown error' }));
+        throw new Error(data.error || `Server error ${response.status}`);
+      }
+
+      const totalCount = response.headers.get('X-Terminal-Count');
+      const tulsaCount = response.headers.get('X-Tulsa-Count');
+
+      const blob = await response.blob();
+      const cd = response.headers.get('Content-Disposition') || '';
+      const match = cd.match(/filename="?([^"]+)"?/);
+      const filename = match ? match[1] : 'Cash_Pos.xlsm';
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+
+      const statsRow = document.getElementById('statsRow');
+      statsRow.innerHTML = '';
+      if (totalCount) {
+        statsRow.innerHTML += `<span class="stat-badge">${totalCount} terminals</span>`;
+      }
+      if (tulsaCount) {
+        statsRow.innerHTML += `<span class="stat-badge">${tulsaCount} Tulsa</span>`;
+      }
+
+      successToast.style.display = 'flex';
+    } catch (err) {
+      document.getElementById('errorMsg').textContent = err.message;
+      errorToast.style.display = 'flex';
+    } finally {
+      btn.disabled = false;
+      spinner.style.display = 'none';
+      btnText.textContent = 'Generate Cash POS File';
+    }
+  });
+</script>
+</body>
+</html>
