@@ -2,7 +2,7 @@ const STORAGE_KEYS = {
   TERMINALS: 'atm_terminals',
   CASH_AMOUNTS: 'atm_cash_amounts',
   DRIVER_SELECTION: 'atm_drivers_today',
-  CITY_ASSIGNMENTS: 'atm_city_assignments',
+  TERMINAL_ASSIGNMENTS: 'atm_terminal_assignments',
 };
 
 function saveToSession(key, data) {

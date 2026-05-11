@@ -452,6 +452,35 @@ def save_city_assignments():
     return jsonify({'saved': len(records)})
 
 
+# ── Terminal assignment API ───────────────────────────────────
+
+@app.route('/api/terminal-assignments', methods=['GET'])
+def get_terminal_assignments():
+    db, err_resp, code = _require_db()
+    if err_resp:
+        return err_resp, code
+    result = db.table('terminal_assignments').select('terminal_id, driver_id').execute()
+    return jsonify(result.data)
+
+
+@app.route('/api/terminal-assignments', methods=['POST'])
+def save_terminal_assignments():
+    db, err_resp, code = _require_db()
+    if err_resp:
+        return err_resp, code
+    data = request.get_json()
+    if not isinstance(data, list):
+        return jsonify({'error': 'Expected array'}), 400
+    now = datetime.now(timezone.utc).isoformat()
+    records = [
+        {'terminal_id': r['terminal_id'], 'driver_id': r.get('driver_id') or None, 'updated_at': now}
+        for r in data if r.get('terminal_id')
+    ]
+    if records:
+        db.table('terminal_assignments').upsert(records, on_conflict='terminal_id').execute()
+    return jsonify({'saved': len(records)})
+
+
 # ── Terminal status API ───────────────────────────────────────
 
 @app.route('/api/terminal-status', methods=['GET'])

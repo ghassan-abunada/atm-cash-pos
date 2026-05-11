@@ -71,7 +71,7 @@
   const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
   const cashAmounts = loadFromSession(STORAGE_KEYS.CASH_AMOUNTS) || {};
   const driverSelection = loadFromSession(STORAGE_KEYS.DRIVER_SELECTION) || [];
-  const cityAssignments = loadFromSession(STORAGE_KEYS.CITY_ASSIGNMENTS) || {};
+  const terminalAssignments = loadFromSession(STORAGE_KEYS.TERMINAL_ASSIGNMENTS) || {};
 
   let allDrivers = [];
 
@@ -88,18 +88,18 @@
   }
 
   function buildCards() {
-    // Map city_key → driver_id (only for active drivers)
     const activeDriverIds = new Set(driverSelection);
 
-    // Build per-driver terminal lists
+    // Build per-driver terminal lists (only terminals with cash to load)
     const driverTerminals = {};  // driver_id → [terminal]
     const unassigned = [];
 
     terminals.forEach(t => {
       const cashToAdd = cashAmounts[t.terminal_id] ?? 0;
+      if (cashToAdd <= 0) return;
       const enriched = { ...t, cash_to_add: cashToAdd };
 
-      const assignedId = cityAssignments[t.city_key] || null;
+      const assignedId = terminalAssignments[t.terminal_id] || null;
       if (assignedId && activeDriverIds.has(assignedId)) {
         if (!driverTerminals[assignedId]) driverTerminals[assignedId] = [];
         driverTerminals[assignedId].push(enriched);
@@ -205,13 +205,12 @@
     try {
       // Build PDF payload
       const activeDriverIds = new Set(driverSelection);
-      const cityAssignmentsMap = cityAssignments;
-
       const driverTerminals = {};
       const unassigned = [];
 
       terminals.forEach(t => {
         const cashToAdd = cashAmounts[t.terminal_id] ?? 0;
+        if (cashToAdd <= 0) return;
         const enriched = {
           terminal_id: t.terminal_id,
           site_name: t.site_name,
@@ -220,7 +219,7 @@
           cash_remaining: t.cash_remaining,
           cash_to_add: cashToAdd,
         };
-        const assignedId = cityAssignmentsMap[t.city_key] || null;
+        const assignedId = terminalAssignments[t.terminal_id] || null;
         if (assignedId && activeDriverIds.has(assignedId)) {
           if (!driverTerminals[assignedId]) driverTerminals[assignedId] = [];
           driverTerminals[assignedId].push(enriched);

@@ -38,7 +38,7 @@
     <h2>Assign Drivers</h2>
   </div>
 
-  <div class="info-banner" id="infoBanner">Loading driver and city data…</div>
+  <div class="info-banner" id="infoBanner">Loading driver data…</div>
 
   <div class="layout-split">
     <!-- Driver panel -->
@@ -53,18 +53,21 @@
       <div id="driverError" style="font-size:0.8rem;color:#dc2626;margin-top:8px;display:none"></div>
     </aside>
 
-    <!-- City table -->
+    <!-- Terminal assignment table -->
     <div>
       <div class="table-wrap">
-        <table class="data-table" id="cityTable">
+        <table class="data-table" id="terminalTable">
           <thead>
             <tr>
+              <th>Terminal ID</th>
+              <th>Site Name</th>
               <th>City</th>
-              <th style="width:80px;text-align:center"># Terminals</th>
+              <th style="text-align:center">Days Left</th>
+              <th style="text-align:right">Cash to Add</th>
               <th>Assigned Driver</th>
             </tr>
           </thead>
-          <tbody id="cityBody"></tbody>
+          <tbody id="terminalBody"></tbody>
         </table>
       </div>
     </div>
@@ -73,12 +76,10 @@
 
 <div class="summary-bar">
   <div class="stat">Drivers today: <strong id="statDrivers">0</strong></div>
-  <div class="stat">Cities unassigned: <strong id="statUnassigned">0</strong></div>
+  <div class="stat">Unassigned: <strong id="statUnassigned">0</strong></div>
   <div class="actions">
     <a href="/step2" class="btn-secondary">← Back</a>
-    <button class="btn-primary" id="saveBtn" onclick="saveAndPreview()">
-      Save &amp; Preview →
-    </button>
+    <button class="btn-primary" onclick="saveAndPreview()">Save &amp; Preview →</button>
   </div>
 </div>
 
@@ -90,43 +91,42 @@
   const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
   const cashAmounts = loadFromSession(STORAGE_KEYS.CASH_AMOUNTS) || {};
   let driverSelection = loadFromSession(STORAGE_KEYS.DRIVER_SELECTION) || [];
-  let cityAssignments = loadFromSession(STORAGE_KEYS.CITY_ASSIGNMENTS) || {};
+  let terminalAssignments = loadFromSession(STORAGE_KEYS.TERMINAL_ASSIGNMENTS) || {};
 
-  let allDrivers = [];  // [{id, name}] from Supabase
+  let allDrivers = [];
 
-  // Only include cities where at least one terminal has cash to load
-  const cityMap = {};
-  terminals.forEach(t => {
-    if (!t.city_key) return;
-    if (!(cashAmounts[t.terminal_id] > 0)) return;
-    if (!cityMap[t.city_key]) cityMap[t.city_key] = { city_key: t.city_key, display: toTitleCase(t.city), count: 0 };
-    cityMap[t.city_key].count++;
-  });
-  const cities = Object.values(cityMap).sort((a, b) => a.display.localeCompare(b.display));
+  // Only terminals with cash to load, sorted by city then site name
+  const activeTerminals = terminals
+    .filter(t => (cashAmounts[t.terminal_id] || 0) > 0)
+    .sort((a, b) => {
+      const cityA = (a.city || '').toLowerCase();
+      const cityB = (b.city || '').toLowerCase();
+      if (cityA !== cityB) return cityA.localeCompare(cityB);
+      return (a.site_name || '').localeCompare(b.site_name || '');
+    });
 
   async function loadData() {
     try {
-      const [drRes, caRes] = await Promise.all([
+      const [drRes, taRes] = await Promise.all([
         fetch('/api/drivers'),
-        fetch('/api/city-assignments'),
+        fetch('/api/terminal-assignments'),
       ]);
       if (!drRes.ok) throw new Error('Failed to load drivers');
-      const drData = await drRes.json();
-      allDrivers = drData;
+      allDrivers = await drRes.json();
 
-      if (caRes.ok) {
-        const caData = await caRes.json();
+      if (taRes.ok) {
+        const taData = await taRes.json();
         // Merge: session wins on conflicts
-        caData.forEach(ca => {
-          if (!(ca.city in cityAssignments)) {
-            cityAssignments[ca.city] = ca.driver_id;
+        taData.forEach(ta => {
+          if (!(ta.terminal_id in terminalAssignments)) {
+            terminalAssignments[ta.terminal_id] = ta.driver_id;
           }
         });
       }
 
       document.getElementById('infoBanner').style.display = 'none';
       renderDriverPanel();
-      renderCityTable();
+      renderTerminalTable();
     } catch (err) {
       document.getElementById('infoBanner').textContent = 'Error loading data: ' + err.message;
     }
@@ -152,12 +152,12 @@
           if (!driverSelection.includes(d.id)) driverSelection.push(d.id);
         } else {
           driverSelection = driverSelection.filter(x => x !== d.id);
-          // Clear city assignments for this driver
-          Object.keys(cityAssignments).forEach(ck => {
-            if (cityAssignments[ck] === d.id) cityAssignments[ck] = null;
+          // Clear assignments for this driver
+          Object.keys(terminalAssignments).forEach(tid => {
+            if (terminalAssignments[tid] === d.id) terminalAssignments[tid] = null;
           });
         }
-        renderCityTable();
+        renderTerminalTable();
         updateSummary();
       });
       container.appendChild(div);
@@ -165,34 +165,40 @@
     updateSummary();
   }
 
-  function renderCityTable() {
-    const tbody = document.getElementById('cityBody');
+  function renderTerminalTable() {
+    const tbody = document.getElementById('terminalBody');
     tbody.innerHTML = '';
-    const activedrivers = allDrivers.filter(d => driverSelection.includes(d.id));
+    const activeDrivers = allDrivers.filter(d => driverSelection.includes(d.id));
 
-    cities.forEach(c => {
-      const assignedId = cityAssignments[c.city_key] || null;
-      const isUnassigned = !assignedId || !activedrivers.find(d => d.id === assignedId);
+    activeTerminals.forEach(t => {
+      const assignedId = terminalAssignments[t.terminal_id] || '';
+      const validAssigned = activeDrivers.find(d => d.id === assignedId) ? assignedId : '';
+      const isUnassigned = !validAssigned;
+
       const tr = document.createElement('tr');
       if (isUnassigned) tr.className = 'unassigned-city';
 
       let options = '<option value="">— Unassigned —</option>';
-      activedrivers.forEach(d => {
-        const sel = d.id === assignedId ? 'selected' : '';
-        options += `<option value="${d.id}" ${sel}>${escHtml(d.name)}</option>`;
+      activeDrivers.forEach(d => {
+        options += `<option value="${d.id}" ${d.id === validAssigned ? 'selected' : ''}>${escHtml(d.name)}</option>`;
       });
 
       tr.innerHTML = `
-        <td><strong>${escHtml(c.display)}</strong></td>
-        <td style="text-align:center">${c.count}</td>
+        <td><code>${t.terminal_id}</code></td>
+        <td>${escHtml(t.site_name)}</td>
+        <td>${toTitleCase(t.city)}</td>
+        <td style="text-align:center">${t.days_until_load === null || t.days_until_load === undefined
+          ? '<span style="color:#dc2626;font-weight:700">OVERDUE</span>'
+          : t.days_until_load}</td>
+        <td style="text-align:right;font-weight:600">${formatCurrency(cashAmounts[t.terminal_id])}</td>
         <td>
-          <select class="city-select" data-city="${c.city_key}">
+          <select class="city-select" data-tid="${t.terminal_id}">
             ${options}
           </select>
         </td>
       `;
       tr.querySelector('select').addEventListener('change', function () {
-        cityAssignments[c.city_key] = this.value || null;
+        terminalAssignments[t.terminal_id] = this.value || null;
         tr.className = this.value ? '' : 'unassigned-city';
         updateSummary();
       });
@@ -202,13 +208,12 @@
   }
 
   function updateSummary() {
-    const activeCount = allDrivers.filter(d => driverSelection.includes(d.id)).length;
-    document.getElementById('statDrivers').textContent = activeCount;
+    const activeDrivers = allDrivers.filter(d => driverSelection.includes(d.id));
+    document.getElementById('statDrivers').textContent = activeDrivers.length;
 
-    const unassigned = cities.filter(c => {
-      const aid = cityAssignments[c.city_key];
-      if (!aid) return true;
-      return !allDrivers.find(d => d.id === aid && driverSelection.includes(d.id));
+    const unassigned = activeTerminals.filter(t => {
+      const aid = terminalAssignments[t.terminal_id];
+      return !aid || !activeDrivers.find(d => d.id === aid);
     }).length;
     document.getElementById('statUnassigned').textContent = unassigned;
   }
@@ -220,11 +225,11 @@
       if (!res.ok) throw new Error('Failed to delete driver');
       allDrivers = allDrivers.filter(d => d.id !== id);
       driverSelection = driverSelection.filter(x => x !== id);
-      Object.keys(cityAssignments).forEach(ck => {
-        if (cityAssignments[ck] === id) cityAssignments[ck] = null;
+      Object.keys(terminalAssignments).forEach(tid => {
+        if (terminalAssignments[tid] === id) terminalAssignments[tid] = null;
       });
       renderDriverPanel();
-      renderCityTable();
+      renderTerminalTable();
     } catch (err) {
       alert('Error: ' + err.message);
     }
@@ -236,14 +241,12 @@
     const name = nameInput.value.trim();
     const errEl = document.getElementById('driverError');
     errEl.style.display = 'none';
-
     if (!name) return;
     if (allDrivers.find(d => d.name.toLowerCase() === name.toLowerCase())) {
       errEl.textContent = 'A driver with that name already exists.';
       errEl.style.display = 'block';
       return;
     }
-
     try {
       const res = await fetch('/api/drivers', {
         method: 'POST',
@@ -260,7 +263,7 @@
       driverSelection.push(newDriver.id);
       nameInput.value = '';
       renderDriverPanel();
-      renderCityTable();
+      renderTerminalTable();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.style.display = 'block';
@@ -269,31 +272,26 @@
 
   window.saveAndPreview = async function () {
     // Capture any unsaved dropdown changes
-    document.querySelectorAll('#cityBody select.city-select').forEach(sel => {
-      cityAssignments[sel.dataset.city] = sel.value || null;
-    });
-    document.querySelectorAll('#driverList input[type="checkbox"]').forEach(cb => {
-      if (cb.checked && !driverSelection.includes(cb.value)) driverSelection.push(cb.value);
+    document.querySelectorAll('#terminalBody select.city-select').forEach(sel => {
+      terminalAssignments[sel.dataset.tid] = sel.value || null;
     });
 
     saveToSession(STORAGE_KEYS.DRIVER_SELECTION, driverSelection);
-    saveToSession(STORAGE_KEYS.CITY_ASSIGNMENTS, cityAssignments);
+    saveToSession(STORAGE_KEYS.TERMINAL_ASSIGNMENTS, terminalAssignments);
 
     // Persist to Supabase
-    const payload = Object.entries(cityAssignments).map(([city, driver_id]) => ({
-      city,
+    const payload = Object.entries(terminalAssignments).map(([terminal_id, driver_id]) => ({
+      terminal_id,
       driver_id: driver_id || null,
-      updated_at: new Date().toISOString(),
     }));
-
     try {
-      await fetch('/api/city-assignments', {
+      await fetch('/api/terminal-assignments', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
       });
     } catch (err) {
-      console.warn('Could not save city assignments to server:', err);
+      console.warn('Could not save terminal assignments to server:', err);
     }
 
     window.location.href = '/step4';
