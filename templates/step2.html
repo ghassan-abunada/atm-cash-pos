@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATM Cash POS — Step 2: Cash Entry</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/utils.js"></script>
+</head>
+<body>
+
+<header>
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <rect width="32" height="32" rx="6" fill="#2d4a7a"/>
+    <rect x="5" y="8" width="22" height="16" rx="2" stroke="#7ab8ff" stroke-width="1.5"/>
+    <rect x="8" y="11" width="6" height="4" rx="1" fill="#7ab8ff"/>
+    <line x1="17" y1="12" x2="24" y2="12" stroke="#7ab8ff" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="15" x2="22" y2="15" stroke="#4a7ab5" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="8" y1="19" x2="24" y2="19" stroke="#4a7ab5" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>
+  <div class="header-title">
+    <h1>ATM Cash POS</h1>
+    <p>Cash management workflow</p>
+  </div>
+  <nav class="step-nav">
+    <a href="/" class="done">1. Upload</a>
+    <span class="sep">›</span>
+    <a href="/step2" class="active">2. Cash Entry</a>
+    <span class="sep">›</span>
+    <a href="/step3" class="disabled">3. Assign Drivers</a>
+    <span class="sep">›</span>
+    <a href="/step4" class="disabled">4. Review & PDF</a>
+  </nav>
+</header>
+
+<main class="page-main">
+  <div class="page-header">
+    <h2>Cash Entry</h2>
+    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+      <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="filterNeeded"> Show only machines needing cash
+      </label>
+    </div>
+  </div>
+
+  <div class="info-banner" id="infoBanner">
+    Loading terminals…
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table" id="terminalTable">
+      <thead>
+        <tr>
+          <th style="width:36px">#</th>
+          <th>Terminal ID</th>
+          <th>Site Name</th>
+          <th>City</th>
+          <th>Days Until Load</th>
+          <th>Cash Remaining</th>
+          <th>Suggested Add</th>
+          <th>Cash to Add</th>
+          <th>Total After Fill</th>
+        </tr>
+      </thead>
+      <tbody id="tableBody"></tbody>
+      <tfoot>
+        <tr id="footerRow" style="display:none">
+          <td colspan="7" style="text-align:right">Totals (visible rows):</td>
+          <td id="footCashToAdd">—</td>
+          <td id="footTotalAfter">—</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+</main>
+
+<div class="summary-bar">
+  <div class="stat">Loading: <strong id="statLoading">0</strong></div>
+  <div class="stat">Cash to Load: <strong id="statCash">$0</strong></div>
+  <div class="actions">
+    <a href="/" class="btn-secondary">← Back</a>
+    <button class="btn-primary" id="continueBtn" onclick="saveAndContinue()">
+      Save &amp; Continue →
+    </button>
+  </div>
+</div>
+
+<script>
+(function () {
+  if (!guardStep(STORAGE_KEYS.TERMINALS, '/')) return;
+
+  const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
+  const savedAmounts = loadFromSession(STORAGE_KEYS.CASH_AMOUNTS) || {};
+
+  // Sort: days_until_load ASC (null last), then cash_remaining ASC
+  terminals.sort((a, b) => {
+    const da = a.days_until_load ?? Infinity;
+    const db = b.days_until_load ?? Infinity;
+    if (da !== db) return da - db;
+    return (a.cash_remaining ?? 0) - (b.cash_remaining ?? 0);
+  });
+
+  const tbody = document.getElementById('tableBody');
+  const filterCheckbox = document.getElementById('filterNeeded');
+
+  function renderTable() {
+    tbody.innerHTML = '';
+    let visibleIdx = 0;
+    let footCash = 0, footTotal = 0;
+
+    terminals.forEach((t, i) => {
+      const cashToAdd = getInputValue(t.terminal_id);
+      const showOnlyNeeded = filterCheckbox.checked;
+      if (showOnlyNeeded && cashToAdd === 0) return;
+
+      visibleIdx++;
+      const tr = document.createElement('tr');
+      tr.className = urgencyClass(t.days_until_load);
+      tr.dataset.tid = t.terminal_id;
+
+      const totalAfter = (t.cash_remaining ?? 0) + cashToAdd;
+      const totalClass = cashToAdd > 0 && totalAfter < 4000 ? 'color:#dc2626;font-weight:700' : '';
+
+      tr.innerHTML = `
+        <td style="color:#64748b">${visibleIdx}</td>
+        <td><code>${t.terminal_id}</code></td>
+        <td>${escHtml(t.site_name)}</td>
+        <td>${toTitleCase(t.city)}</td>
+        <td style="text-align:center">${t.days_until_load === null || t.days_until_load === undefined
+          ? '<span style="color:#dc2626;font-weight:700">OVERDUE</span>'
+          : t.days_until_load}</td>
+        <td style="text-align:right">${formatCurrency(t.cash_remaining)}</td>
+        <td style="text-align:right">${formatCurrency(t.suggested_cash_add)}</td>
+        <td>
+          <input type="number" class="cash-input" data-tid="${t.terminal_id}"
+            value="${cashToAdd}" min="0" step="500">
+        </td>
+        <td style="text-align:right;${totalClass}" class="total-cell">${formatCurrency(totalAfter)}</td>
+      `;
+      tbody.appendChild(tr);
+
+      footCash += cashToAdd;
+      footTotal += totalAfter;
+    });
+
+    document.getElementById('footCashToAdd').textContent = formatCurrency(footCash);
+    document.getElementById('footTotalAfter').textContent = formatCurrency(footTotal);
+    document.getElementById('footerRow').style.display = visibleIdx > 0 ? '' : 'none';
+
+    updateSummary();
+    attachInputListeners();
+  }
+
+  function getInputValue(tid) {
+    const el = tbody.querySelector(`input[data-tid="${tid}"]`);
+    if (el) return Number(el.value) || 0;
+    if (tid in savedAmounts) return savedAmounts[tid];
+    const t = terminals.find(x => x.terminal_id === tid);
+    return t ? computeDefaultCashToAdd(t.suggested_cash_add) : 0;
+  }
+
+  function attachInputListeners() {
+    tbody.querySelectorAll('input.cash-input').forEach(inp => {
+      inp.addEventListener('input', function () {
+        const tid = this.dataset.tid;
+        savedAmounts[tid] = Number(this.value) || 0;
+        const tr = this.closest('tr');
+        const t = terminals.find(x => x.terminal_id === tid);
+        const cashToAdd = savedAmounts[tid];
+        const totalAfter = (t.cash_remaining ?? 0) + cashToAdd;
+        const totalCell = tr.querySelector('.total-cell');
+        totalCell.textContent = formatCurrency(totalAfter);
+        totalCell.style.cssText = cashToAdd > 0 && totalAfter < 4000
+          ? 'text-align:right;color:#dc2626;font-weight:700'
+          : 'text-align:right';
+        recalcFooter();
+        updateSummary();
+      });
+    });
+  }
+
+  function recalcFooter() {
+    let footCash = 0, footTotal = 0;
+    tbody.querySelectorAll('tr').forEach(tr => {
+      const tid = tr.dataset.tid;
+      if (!tid) return;
+      const t = terminals.find(x => x.terminal_id === tid);
+      const cashToAdd = getInputValue(tid);
+      footCash += cashToAdd;
+      footTotal += (t.cash_remaining ?? 0) + cashToAdd;
+    });
+    document.getElementById('footCashToAdd').textContent = formatCurrency(footCash);
+    document.getElementById('footTotalAfter').textContent = formatCurrency(footTotal);
+  }
+
+  function updateSummary() {
+    let loading = 0, totalCash = 0;
+    terminals.forEach(t => {
+      const v = getInputValue(t.terminal_id);
+      if (v > 0) { loading++; totalCash += v; }
+    });
+    document.getElementById('statLoading').textContent = loading;
+    document.getElementById('statCash').textContent = '$' + totalCash.toLocaleString('en-US');
+  }
+
+  function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  filterCheckbox.addEventListener('change', renderTable);
+
+  // Initialize saved amounts with defaults for any not yet touched
+  terminals.forEach(t => {
+    if (!(t.terminal_id in savedAmounts)) {
+      savedAmounts[t.terminal_id] = computeDefaultCashToAdd(t.suggested_cash_add);
+    }
+  });
+
+  document.getElementById('infoBanner').textContent =
+    `${terminals.length} terminals loaded. Sorted by urgency. Adjust cash amounts as needed.`;
+
+  renderTable();
+
+  window.saveAndContinue = function () {
+    // Capture current input values before saving
+    tbody.querySelectorAll('input.cash-input').forEach(inp => {
+      savedAmounts[inp.dataset.tid] = Number(inp.value) || 0;
+    });
+    saveToSession(STORAGE_KEYS.CASH_AMOUNTS, savedAmounts);
+    window.location.href = '/step3';
+  };
+})();
+</script>
+
+</body>
+</html>

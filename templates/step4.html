@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATM Cash POS — Step 4: Review & PDF</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/utils.js"></script>
+</head>
+<body>
+
+<header>
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <rect width="32" height="32" rx="6" fill="#2d4a7a"/>
+    <rect x="5" y="8" width="22" height="16" rx="2" stroke="#7ab8ff" stroke-width="1.5"/>
+    <rect x="8" y="11" width="6" height="4" rx="1" fill="#7ab8ff"/>
+    <line x1="17" y1="12" x2="24" y2="12" stroke="#7ab8ff" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="15" x2="22" y2="15" stroke="#4a7ab5" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="8" y1="19" x2="24" y2="19" stroke="#4a7ab5" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>
+  <div class="header-title">
+    <h1>ATM Cash POS</h1>
+    <p>Cash management workflow</p>
+  </div>
+  <nav class="step-nav">
+    <a href="/" class="done">1. Upload</a>
+    <span class="sep">›</span>
+    <a href="/step2" class="done">2. Cash Entry</a>
+    <span class="sep">›</span>
+    <a href="/step3" class="done">3. Assign Drivers</a>
+    <span class="sep">›</span>
+    <a href="/step4" class="active">4. Review & PDF</a>
+  </nav>
+</header>
+
+<main class="page-main">
+  <div class="page-header">
+    <h2>Review &amp; Download PDF</h2>
+    <button class="btn-success" id="pdfBtn" onclick="downloadPDF()">
+      Download Driver PDF
+    </button>
+  </div>
+
+  <div class="info-banner" id="infoBanner">Building route summary…</div>
+
+  <div id="grandTotalBar" style="display:none" class="grand-total-bar">
+    <div class="gt-stat">Drivers: <strong id="gtDrivers">0</strong></div>
+    <div class="gt-stat">Terminals: <strong id="gtTerminals">0</strong></div>
+    <div class="gt-stat">Total Cash to Load: <strong id="gtCash">$0</strong></div>
+  </div>
+
+  <div id="cardsContainer"></div>
+</main>
+
+<div class="summary-bar">
+  <div class="stat">Total Cash: <strong id="statCash">$0</strong></div>
+  <div class="actions">
+    <a href="/step3" class="btn-secondary">← Back</a>
+    <button class="btn-success" onclick="downloadPDF()">
+      Download Driver PDF
+    </button>
+  </div>
+</div>
+
+<script>
+(function () {
+  if (!guardStep(STORAGE_KEYS.TERMINALS, '/')) return;
+  if (!guardStep(STORAGE_KEYS.CASH_AMOUNTS, '/step2')) return;
+  if (!guardStep(STORAGE_KEYS.DRIVER_SELECTION, '/step3')) return;
+
+  const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
+  const cashAmounts = loadFromSession(STORAGE_KEYS.CASH_AMOUNTS) || {};
+  const driverSelection = loadFromSession(STORAGE_KEYS.DRIVER_SELECTION) || [];
+  const cityAssignments = loadFromSession(STORAGE_KEYS.CITY_ASSIGNMENTS) || {};
+
+  let allDrivers = [];
+
+  async function loadAndRender() {
+    try {
+      const res = await fetch('/api/drivers');
+      if (!res.ok) throw new Error('Failed to load drivers');
+      allDrivers = await res.json();
+    } catch (err) {
+      document.getElementById('infoBanner').textContent = 'Warning: Could not load driver names — ' + err.message;
+    }
+
+    buildCards();
+  }
+
+  function buildCards() {
+    // Map city_key → driver_id (only for active drivers)
+    const activeDriverIds = new Set(driverSelection);
+
+    // Build per-driver terminal lists
+    const driverTerminals = {};  // driver_id → [terminal]
+    const unassigned = [];
+
+    terminals.forEach(t => {
+      const cashToAdd = cashAmounts[t.terminal_id] ?? 0;
+      const enriched = { ...t, cash_to_add: cashToAdd };
+
+      const assignedId = cityAssignments[t.city_key] || null;
+      if (assignedId && activeDriverIds.has(assignedId)) {
+        if (!driverTerminals[assignedId]) driverTerminals[assignedId] = [];
+        driverTerminals[assignedId].push(enriched);
+      } else {
+        unassigned.push(enriched);
+      }
+    });
+
+    const container = document.getElementById('cardsContainer');
+    container.innerHTML = '';
+
+    let grandTotal = 0, grandTerminals = 0;
+
+    // Unassigned card (warning) — show at top if any
+    if (unassigned.length > 0) {
+      const totalUnassignedCash = unassigned.reduce((s, t) => s + t.cash_to_add, 0);
+      grandTotal += totalUnassignedCash;
+      grandTerminals += unassigned.length;
+      container.appendChild(buildCard(null, 'Unassigned / No Driver', unassigned, true));
+    }
+
+    // One card per active driver (sorted by name)
+    const activeDrivers = allDrivers
+      .filter(d => activeDriverIds.has(d.id) && driverTerminals[d.id]?.length > 0)
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    activeDrivers.forEach(d => {
+      const dts = driverTerminals[d.id] || [];
+      const driverCash = dts.reduce((s, t) => s + t.cash_to_add, 0);
+      grandTotal += driverCash;
+      grandTerminals += dts.length;
+      container.appendChild(buildCard(d.id, d.name, dts, false));
+    });
+
+    // Grand total bar
+    document.getElementById('gtDrivers').textContent = activeDrivers.length;
+    document.getElementById('gtTerminals').textContent = grandTerminals;
+    document.getElementById('gtCash').textContent = formatCurrency(grandTotal);
+    document.getElementById('grandTotalBar').style.display = 'flex';
+    document.getElementById('statCash').textContent = formatCurrency(grandTotal);
+
+    document.getElementById('infoBanner').style.display = 'none';
+  }
+
+  function buildCard(driverId, driverName, terminalList, isWarning) {
+    const card = document.createElement('div');
+    card.className = 'driver-card' + (isWarning ? ' warning-card' : '');
+
+    const subtotal = terminalList.reduce((s, t) => s + t.cash_to_add, 0);
+
+    let rows = '';
+    terminalList.forEach(t => {
+      const uc = urgencyClass(t.days_until_load);
+      rows += `<tr class="${uc}">
+        <td><code>${escHtml(t.terminal_id)}</code></td>
+        <td>${escHtml(t.site_name)}</td>
+        <td>${toTitleCase(t.city)}</td>
+        <td style="text-align:center">${t.days_until_load === null || t.days_until_load === undefined
+          ? '<span style="color:#dc2626;font-weight:700">OVERDUE</span>'
+          : t.days_until_load}</td>
+        <td style="text-align:right">${formatCurrency(t.cash_remaining)}</td>
+        <td style="text-align:right;font-weight:600">${formatCurrency(t.cash_to_add)}</td>
+      </tr>`;
+    });
+
+    card.innerHTML = `
+      <div class="driver-card-header">
+        <h3>${escHtml(driverName)}</h3>
+        <span class="driver-badge">${terminalList.length} terminal${terminalList.length !== 1 ? 's' : ''}</span>
+        <span class="driver-badge">${formatCurrency(subtotal)}</span>
+      </div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Terminal ID</th>
+              <th>Site Name</th>
+              <th>City</th>
+              <th style="text-align:center">Days Left</th>
+              <th style="text-align:right">Remaining</th>
+              <th style="text-align:right">Cash to Add</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+          <tfoot>
+            <tr>
+              <td colspan="5" style="text-align:right">Subtotal:</td>
+              <td style="text-align:right">${formatCurrency(subtotal)}</td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+    `;
+    return card;
+  }
+
+  window.downloadPDF = async function () {
+    const btn = document.getElementById('pdfBtn');
+    const origText = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Generating…';
+
+    try {
+      // Build PDF payload
+      const activeDriverIds = new Set(driverSelection);
+      const cityAssignmentsMap = cityAssignments;
+
+      const driverTerminals = {};
+      const unassigned = [];
+
+      terminals.forEach(t => {
+        const cashToAdd = cashAmounts[t.terminal_id] ?? 0;
+        const enriched = {
+          terminal_id: t.terminal_id,
+          site_name: t.site_name,
+          city: t.city,
+          days_until_load: t.days_until_load,
+          cash_remaining: t.cash_remaining,
+          cash_to_add: cashToAdd,
+        };
+        const assignedId = cityAssignmentsMap[t.city_key] || null;
+        if (assignedId && activeDriverIds.has(assignedId)) {
+          if (!driverTerminals[assignedId]) driverTerminals[assignedId] = [];
+          driverTerminals[assignedId].push(enriched);
+        } else {
+          unassigned.push(enriched);
+        }
+      });
+
+      const pdfDrivers = allDrivers
+        .filter(d => activeDriverIds.has(d.id) && driverTerminals[d.id]?.length > 0)
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map(d => ({ name: d.name, terminals: driverTerminals[d.id] }));
+
+      if (unassigned.length > 0) {
+        pdfDrivers.unshift({ name: 'Unassigned', terminals: unassigned });
+      }
+
+      const res = await fetch('/generate-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ drivers: pdfDrivers }),
+      });
+
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({}));
+        throw new Error(d.error || `Server error ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const today = new Date().toISOString().slice(0, 10);
+      a.download = `ATM_Routes_${today}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+    } catch (err) {
+      alert('PDF generation failed: ' + err.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = origText;
+    }
+  };
+
+  function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  loadAndRender();
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ATM Cash POS — Step 3: Assign Drivers</title>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/utils.js"></script>
+</head>
+<body>
+
+<header>
+  <svg width="32" height="32" viewBox="0 0 32 32" fill="none">
+    <rect width="32" height="32" rx="6" fill="#2d4a7a"/>
+    <rect x="5" y="8" width="22" height="16" rx="2" stroke="#7ab8ff" stroke-width="1.5"/>
+    <rect x="8" y="11" width="6" height="4" rx="1" fill="#7ab8ff"/>
+    <line x1="17" y1="12" x2="24" y2="12" stroke="#7ab8ff" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="17" y1="15" x2="22" y2="15" stroke="#4a7ab5" stroke-width="1.5" stroke-linecap="round"/>
+    <line x1="8" y1="19" x2="24" y2="19" stroke="#4a7ab5" stroke-width="1.5" stroke-linecap="round"/>
+  </svg>
+  <div class="header-title">
+    <h1>ATM Cash POS</h1>
+    <p>Cash management workflow</p>
+  </div>
+  <nav class="step-nav">
+    <a href="/" class="done">1. Upload</a>
+    <span class="sep">›</span>
+    <a href="/step2" class="done">2. Cash Entry</a>
+    <span class="sep">›</span>
+    <a href="/step3" class="active">3. Assign Drivers</a>
+    <span class="sep">›</span>
+    <a href="/step4" class="disabled">4. Review & PDF</a>
+  </nav>
+</header>
+
+<main class="page-main">
+  <div class="page-header">
+    <h2>Assign Drivers</h2>
+  </div>
+
+  <div class="info-banner" id="infoBanner">Loading driver and city data…</div>
+
+  <div class="layout-split">
+    <!-- Driver panel -->
+    <aside class="driver-panel">
+      <h3>Today's Drivers</h3>
+      <div id="driverList"></div>
+
+      <form class="add-driver-form" id="addDriverForm">
+        <input type="text" id="newDriverName" placeholder="Driver name" maxlength="60">
+        <button type="submit" class="btn-primary" style="padding:7px 12px;font-size:0.82rem">Add</button>
+      </form>
+      <div id="driverError" style="font-size:0.8rem;color:#dc2626;margin-top:8px;display:none"></div>
+    </aside>
+
+    <!-- City table -->
+    <div>
+      <div class="table-wrap">
+        <table class="data-table" id="cityTable">
+          <thead>
+            <tr>
+              <th>City</th>
+              <th style="width:80px;text-align:center"># Terminals</th>
+              <th>Assigned Driver</th>
+            </tr>
+          </thead>
+          <tbody id="cityBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</main>
+
+<div class="summary-bar">
+  <div class="stat">Drivers today: <strong id="statDrivers">0</strong></div>
+  <div class="stat">Cities unassigned: <strong id="statUnassigned">0</strong></div>
+  <div class="actions">
+    <a href="/step2" class="btn-secondary">← Back</a>
+    <button class="btn-primary" id="saveBtn" onclick="saveAndPreview()">
+      Save &amp; Preview →
+    </button>
+  </div>
+</div>
+
+<script>
+(function () {
+  if (!guardStep(STORAGE_KEYS.TERMINALS, '/')) return;
+
+  const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
+  let driverSelection = loadFromSession(STORAGE_KEYS.DRIVER_SELECTION) || [];
+  let cityAssignments = loadFromSession(STORAGE_KEYS.CITY_ASSIGNMENTS) || {};
+
+  let allDrivers = [];  // [{id, name}] from Supabase
+
+  // Build unique cities from session
+  const cityMap = {};
+  terminals.forEach(t => {
+    if (!t.city_key) return;
+    if (!cityMap[t.city_key]) cityMap[t.city_key] = { city_key: t.city_key, display: toTitleCase(t.city), count: 0 };
+    cityMap[t.city_key].count++;
+  });
+  const cities = Object.values(cityMap).sort((a, b) => a.display.localeCompare(b.display));
+
+  async function loadData() {
+    try {
+      const [drRes, caRes] = await Promise.all([
+        fetch('/api/drivers'),
+        fetch('/api/city-assignments'),
+      ]);
+      if (!drRes.ok) throw new Error('Failed to load drivers');
+      const drData = await drRes.json();
+      allDrivers = drData;
+
+      if (caRes.ok) {
+        const caData = await caRes.json();
+        // Merge: session wins on conflicts
+        caData.forEach(ca => {
+          if (!(ca.city in cityAssignments)) {
+            cityAssignments[ca.city] = ca.driver_id;
+          }
+        });
+      }
+
+      document.getElementById('infoBanner').style.display = 'none';
+      renderDriverPanel();
+      renderCityTable();
+    } catch (err) {
+      document.getElementById('infoBanner').textContent = 'Error loading data: ' + err.message;
+    }
+  }
+
+  function renderDriverPanel() {
+    const container = document.getElementById('driverList');
+    container.innerHTML = '';
+    allDrivers.forEach(d => {
+      const isChecked = driverSelection.includes(d.id);
+      const div = document.createElement('div');
+      div.className = 'driver-item';
+      div.dataset.id = d.id;
+      div.innerHTML = `
+        <label>
+          <input type="checkbox" value="${d.id}" ${isChecked ? 'checked' : ''}>
+          ${escHtml(d.name)}
+        </label>
+        <button class="btn-danger" title="Remove driver" onclick="removeDriver('${d.id}', '${escHtml(d.name)}')">✕</button>
+      `;
+      div.querySelector('input').addEventListener('change', function () {
+        if (this.checked) {
+          if (!driverSelection.includes(d.id)) driverSelection.push(d.id);
+        } else {
+          driverSelection = driverSelection.filter(x => x !== d.id);
+          // Clear city assignments for this driver
+          Object.keys(cityAssignments).forEach(ck => {
+            if (cityAssignments[ck] === d.id) cityAssignments[ck] = null;
+          });
+        }
+        renderCityTable();
+        updateSummary();
+      });
+      container.appendChild(div);
+    });
+    updateSummary();
+  }
+
+  function renderCityTable() {
+    const tbody = document.getElementById('cityBody');
+    tbody.innerHTML = '';
+    const activedrivers = allDrivers.filter(d => driverSelection.includes(d.id));
+
+    cities.forEach(c => {
+      const assignedId = cityAssignments[c.city_key] || null;
+      const isUnassigned = !assignedId || !activedrivers.find(d => d.id === assignedId);
+      const tr = document.createElement('tr');
+      if (isUnassigned) tr.className = 'unassigned-city';
+
+      let options = '<option value="">— Unassigned —</option>';
+      activedrivers.forEach(d => {
+        const sel = d.id === assignedId ? 'selected' : '';
+        options += `<option value="${d.id}" ${sel}>${escHtml(d.name)}</option>`;
+      });
+
+      tr.innerHTML = `
+        <td><strong>${escHtml(c.display)}</strong></td>
+        <td style="text-align:center">${c.count}</td>
+        <td>
+          <select class="city-select" data-city="${c.city_key}">
+            ${options}
+          </select>
+        </td>
+      `;
+      tr.querySelector('select').addEventListener('change', function () {
+        cityAssignments[c.city_key] = this.value || null;
+        tr.className = this.value ? '' : 'unassigned-city';
+        updateSummary();
+      });
+      tbody.appendChild(tr);
+    });
+    updateSummary();
+  }
+
+  function updateSummary() {
+    const activeCount = allDrivers.filter(d => driverSelection.includes(d.id)).length;
+    document.getElementById('statDrivers').textContent = activeCount;
+
+    const unassigned = cities.filter(c => {
+      const aid = cityAssignments[c.city_key];
+      if (!aid) return true;
+      return !allDrivers.find(d => d.id === aid && driverSelection.includes(d.id));
+    }).length;
+    document.getElementById('statUnassigned').textContent = unassigned;
+  }
+
+  window.removeDriver = async function (id, name) {
+    if (!confirm(`Remove driver "${name}" from the roster?`)) return;
+    try {
+      const res = await fetch(`/api/drivers/${id}`, { method: 'DELETE' });
+      if (!res.ok) throw new Error('Failed to delete driver');
+      allDrivers = allDrivers.filter(d => d.id !== id);
+      driverSelection = driverSelection.filter(x => x !== id);
+      Object.keys(cityAssignments).forEach(ck => {
+        if (cityAssignments[ck] === id) cityAssignments[ck] = null;
+      });
+      renderDriverPanel();
+      renderCityTable();
+    } catch (err) {
+      alert('Error: ' + err.message);
+    }
+  };
+
+  document.getElementById('addDriverForm').addEventListener('submit', async function (e) {
+    e.preventDefault();
+    const nameInput = document.getElementById('newDriverName');
+    const name = nameInput.value.trim();
+    const errEl = document.getElementById('driverError');
+    errEl.style.display = 'none';
+
+    if (!name) return;
+    if (allDrivers.find(d => d.name.toLowerCase() === name.toLowerCase())) {
+      errEl.textContent = 'A driver with that name already exists.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/drivers', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || 'Failed to add driver');
+      }
+      const newDriver = await res.json();
+      allDrivers.push(newDriver);
+      allDrivers.sort((a, b) => a.name.localeCompare(b.name));
+      driverSelection.push(newDriver.id);
+      nameInput.value = '';
+      renderDriverPanel();
+      renderCityTable();
+    } catch (err) {
+      errEl.textContent = err.message;
+      errEl.style.display = 'block';
+    }
+  });
+
+  window.saveAndPreview = async function () {
+    // Capture any unsaved dropdown changes
+    document.querySelectorAll('#cityBody select.city-select').forEach(sel => {
+      cityAssignments[sel.dataset.city] = sel.value || null;
+    });
+    document.querySelectorAll('#driverList input[type="checkbox"]').forEach(cb => {
+      if (cb.checked && !driverSelection.includes(cb.value)) driverSelection.push(cb.value);
+    });
+
+    saveToSession(STORAGE_KEYS.DRIVER_SELECTION, driverSelection);
+    saveToSession(STORAGE_KEYS.CITY_ASSIGNMENTS, cityAssignments);
+
+    // Persist to Supabase
+    const payload = Object.entries(cityAssignments).map(([city, driver_id]) => ({
+      city,
+      driver_id: driver_id || null,
+      updated_at: new Date().toISOString(),
+    }));
+
+    try {
+      await fetch('/api/city-assignments', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+    } catch (err) {
+      console.warn('Could not save city assignments to server:', err);
+    }
+
+    window.location.href = '/step4';
+  };
+
+  function escHtml(s) {
+    return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  loadData();
+})();
+</script>
+
+</body>
+</html>
