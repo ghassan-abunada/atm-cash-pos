@@ -127,6 +127,7 @@
       document.getElementById('infoBanner').style.display = 'none';
       renderDriverPanel();
       renderTerminalTable();
+      attachSortHeaders(document.getElementById('terminalTable'));
     } catch (err) {
       document.getElementById('infoBanner').textContent = 'Error loading data: ' + err.message;
     }

@@ -97,6 +97,11 @@ header svg { flex-shrink: 0; }
   z-index: 10;
 }
 
+.data-table th.th-sortable { cursor: pointer; }
+.data-table th.th-sortable:hover { background: #243d6b; }
+.data-table th.th-sort-asc::after  { content: ' ▲'; font-size: 0.65em; opacity: 0.85; }
+.data-table th.th-sort-desc::after { content: ' ▼'; font-size: 0.65em; opacity: 0.85; }
+
 .data-table td {
   padding: 8px 12px;
   border-bottom: 1px solid #e8eef5;

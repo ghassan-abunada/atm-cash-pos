@@ -48,6 +48,49 @@ function formatCurrency(n) {
   return '$' + Number(n).toLocaleString('en-US');
 }
 
+function attachSortHeaders(tableEl) {
+  let sortCol = -1, sortDir = 1;
+  const headers = Array.from(tableEl.querySelectorAll('thead th'));
+
+  function applySort() {
+    if (sortCol < 0) return;
+    const tbody = tableEl.querySelector('tbody');
+    const rows = Array.from(tbody.querySelectorAll('tr'));
+    rows.sort((a, b) => {
+      const ac = a.cells[sortCol], bc = b.cells[sortCol];
+      if (!ac || !bc) return 0;
+      const aText = ac.textContent.trim().replace(/[$,]/g, '');
+      const bText = bc.textContent.trim().replace(/[$,]/g, '');
+      if (aText === 'OVERDUE') return -sortDir;
+      if (bText === 'OVERDUE') return sortDir;
+      if (aText === '—' || aText === '') return sortDir;
+      if (bText === '—' || bText === '') return -sortDir;
+      const aN = parseFloat(aText), bN = parseFloat(bText);
+      if (!isNaN(aN) && !isNaN(bN)) return (aN - bN) * sortDir;
+      return aText.localeCompare(bText) * sortDir;
+    });
+    rows.forEach(r => tbody.appendChild(r));
+  }
+
+  headers.forEach((th, idx) => {
+    if ('noSort' in th.dataset) return;
+    th.classList.add('th-sortable');
+    th.addEventListener('click', function () {
+      if (sortCol === idx) {
+        sortDir *= -1;
+      } else {
+        sortCol = idx;
+        sortDir = 1;
+      }
+      headers.forEach(h => h.classList.remove('th-sort-asc', 'th-sort-desc'));
+      this.classList.add(sortDir === 1 ? 'th-sort-asc' : 'th-sort-desc');
+      applySort();
+    });
+  });
+
+  return applySort;
+}
+
 function triggerBase64Download(b64, filename, mimeType) {
   const bytes = atob(b64);
   const arr = new Uint8Array(bytes.length);

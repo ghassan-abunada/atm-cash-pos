@@ -70,7 +70,7 @@
     <table class="data-table" id="terminalTable">
       <thead>
         <tr>
-          <th style="width:32px">#</th>
+          <th style="width:32px" data-no-sort>#</th>
           <th>Terminal ID</th>
           <th>Status</th>
           <th>Site Name</th>
@@ -238,6 +238,7 @@
         window._statusSaveTimer = setTimeout(flushStatusChanges, 1500);
 
         renderTable();
+        if (reapplySort) reapplySort();
       });
     });
   }
@@ -289,7 +290,8 @@
     return (s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  filterCheckbox.addEventListener('change', renderTable);
+  let reapplySort = null;
+  filterCheckbox.addEventListener('change', () => { renderTable(); if (reapplySort) reapplySort(); });
 
   // Load statuses from Supabase, then render
   async function init() {
@@ -305,6 +307,7 @@
     document.getElementById('infoBanner').textContent =
       `${terminals.length} terminals loaded. Sorted by urgency. Enter cash amounts for active terminals.`;
     renderTable();
+    reapplySort = attachSortHeaders(document.getElementById('terminalTable'));
   }
 
   window.saveAndContinue = function () {
