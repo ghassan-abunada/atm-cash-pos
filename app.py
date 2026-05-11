@@ -452,6 +452,35 @@ def save_city_assignments():
     return jsonify({'saved': len(records)})
 
 
+# ── Terminal status API ───────────────────────────────────────
+
+@app.route('/api/terminal-status', methods=['GET'])
+def get_terminal_status():
+    db, err_resp, code = _require_db()
+    if err_resp:
+        return err_resp, code
+    result = db.table('terminal_status').select('terminal_id, status').execute()
+    return jsonify(result.data)
+
+
+@app.route('/api/terminal-status', methods=['POST'])
+def save_terminal_status():
+    db, err_resp, code = _require_db()
+    if err_resp:
+        return err_resp, code
+    data = request.get_json()
+    if not isinstance(data, list):
+        return jsonify({'error': 'Expected array'}), 400
+    now = datetime.now(timezone.utc).isoformat()
+    records = [
+        {'terminal_id': r['terminal_id'], 'status': r['status'], 'updated_at': now}
+        for r in data if r.get('terminal_id') and r.get('status')
+    ]
+    if records:
+        db.table('terminal_status').upsert(records, on_conflict='terminal_id').execute()
+    return jsonify({'saved': len(records)})
+
+
 # ── PDF route ─────────────────────────────────────────────────
 
 @app.route('/generate-pdf', methods=['POST'])

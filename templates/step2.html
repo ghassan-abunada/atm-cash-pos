@@ -6,6 +6,27 @@
   <title>ATM Cash POS — Step 2: Cash Entry</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/utils.js"></script>
+  <style>
+    .status-active   { }
+    .status-inactive { background: #f1f5f9 !important; color: #94a3b8; }
+    .status-seasonal { background: #fdf4ff !important; color: #7c3aed; }
+    .status-inactive td, .status-seasonal td { color: inherit; }
+    .status-inactive input, .status-seasonal input { opacity: 0.35; pointer-events: none; }
+
+    select.status-select {
+      padding: 4px 6px;
+      border-radius: 6px;
+      border: 1px solid #c8d6e8;
+      font-size: 0.8rem;
+      font-family: inherit;
+      background: #fff;
+      cursor: pointer;
+    }
+    select.status-select:focus { border-color: #3b74d8; outline: none; }
+    select.status-select.s-inactive { background: #f1f5f9; color: #64748b; border-color: #cbd5e1; }
+    select.status-select.s-seasonal { background: #fdf4ff; color: #7c3aed; border-color: #e9d5ff; }
+    select.status-select.s-active   { background: #f0fdf4; color: #15803d; border-color: #bbf7d0; }
+  </style>
 </head>
 <body>
 
@@ -36,23 +57,22 @@
 <main class="page-main">
   <div class="page-header">
     <h2>Cash Entry</h2>
-    <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+    <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
       <label style="font-size:0.85rem;display:flex;align-items:center;gap:6px;cursor:pointer">
-        <input type="checkbox" id="filterNeeded"> Show only machines needing cash
+        <input type="checkbox" id="filterNeeded"> Active only (hide inactive &amp; seasonal)
       </label>
     </div>
   </div>
 
-  <div class="info-banner" id="infoBanner">
-    Loading terminals…
-  </div>
+  <div class="info-banner" id="infoBanner">Loading terminals…</div>
 
   <div class="table-wrap">
     <table class="data-table" id="terminalTable">
       <thead>
         <tr>
-          <th style="width:36px">#</th>
+          <th style="width:32px">#</th>
           <th>Terminal ID</th>
+          <th>Status</th>
           <th>Site Name</th>
           <th>City</th>
           <th>Days Until Load</th>
@@ -65,7 +85,7 @@
       <tbody id="tableBody"></tbody>
       <tfoot>
         <tr id="footerRow" style="display:none">
-          <td colspan="7" style="text-align:right">Totals (visible rows):</td>
+          <td colspan="8" style="text-align:right">Totals (active, with cash entered):</td>
           <td id="footCashToAdd">—</td>
           <td id="footTotalAfter">—</td>
         </tr>
@@ -91,6 +111,8 @@
 
   const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
   const savedAmounts = loadFromSession(STORAGE_KEYS.CASH_AMOUNTS) || {};
+  let terminalStatuses = {};  // terminal_id → 'active'|'inactive'|'seasonal'
+  const pendingStatusChanges = {};  // terminal_id → status (to batch-save)
 
   // Sort: days_until_load ASC (null last), then cash_remaining ASC
   terminals.sort((a, b) => {
@@ -103,104 +125,164 @@
   const tbody = document.getElementById('tableBody');
   const filterCheckbox = document.getElementById('filterNeeded');
 
+  function isActive(tid) {
+    const s = terminalStatuses[tid] || 'active';
+    return s === 'active';
+  }
+
+  function getStatus(tid) {
+    return terminalStatuses[tid] || 'active';
+  }
+
+  function getCashValue(tid) {
+    if (!isActive(tid)) return 0;
+    const el = tbody.querySelector(`input.cash-input[data-tid="${tid}"]`);
+    if (el) return Number(el.value) || 0;
+    return savedAmounts[tid] ?? '';
+  }
+
   function renderTable() {
     tbody.innerHTML = '';
     let visibleIdx = 0;
-    let footCash = 0, footTotal = 0;
 
-    terminals.forEach((t, i) => {
-      const cashToAdd = getInputValue(t.terminal_id);
-      const showOnlyNeeded = filterCheckbox.checked;
-      if (showOnlyNeeded && cashToAdd === 0) return;
+    terminals.forEach(t => {
+      const status = getStatus(t.terminal_id);
+      const active = status === 'active';
+      const hideRow = filterCheckbox.checked && !active;
+      if (hideRow) return;
 
       visibleIdx++;
-      const tr = document.createElement('tr');
-      tr.className = urgencyClass(t.days_until_load);
-      tr.dataset.tid = t.terminal_id;
+      const cashVal = active ? (savedAmounts[t.terminal_id] ?? '') : '';
+      const cashNum = active ? (Number(cashVal) || 0) : 0;
+      const totalAfter = (t.cash_remaining ?? 0) + cashNum;
+      const totalDisplay = cashNum > 0 ? formatCurrency(totalAfter) : '—';
+      const totalStyle = cashNum > 0 && totalAfter < 4000 ? 'color:#dc2626;font-weight:700' : '';
 
-      const totalAfter = (t.cash_remaining ?? 0) + cashToAdd;
-      const totalClass = cashToAdd > 0 && totalAfter < 4000 ? 'color:#dc2626;font-weight:700' : '';
+      const urgClass = active ? urgencyClass(t.days_until_load) : '';
+      const statusClass = `status-${status}`;
+
+      const tr = document.createElement('tr');
+      tr.className = `${urgClass} ${statusClass}`.trim();
+      tr.dataset.tid = t.terminal_id;
 
       tr.innerHTML = `
         <td style="color:#64748b">${visibleIdx}</td>
         <td><code>${t.terminal_id}</code></td>
+        <td>
+          <select class="status-select s-${status}" data-tid="${t.terminal_id}">
+            <option value="active"   ${status === 'active'   ? 'selected' : ''}>Active</option>
+            <option value="inactive" ${status === 'inactive' ? 'selected' : ''}>Inactive</option>
+            <option value="seasonal" ${status === 'seasonal' ? 'selected' : ''}>Seasonal</option>
+          </select>
+        </td>
         <td>${escHtml(t.site_name)}</td>
         <td>${toTitleCase(t.city)}</td>
         <td style="text-align:center">${t.days_until_load === null || t.days_until_load === undefined
-          ? '<span style="color:#dc2626;font-weight:700">OVERDUE</span>'
+          ? (active ? '<span style="color:#dc2626;font-weight:700">OVERDUE</span>' : '—')
           : t.days_until_load}</td>
         <td style="text-align:right">${formatCurrency(t.cash_remaining)}</td>
-        <td style="text-align:right">${formatCurrency(t.suggested_cash_add)}</td>
+        <td style="text-align:right">${active ? formatCurrency(t.suggested_cash_add) : '—'}</td>
         <td>
           <input type="number" class="cash-input" data-tid="${t.terminal_id}"
-            value="${cashToAdd}" min="0" step="500">
+            value="${cashVal}" min="0" step="500" placeholder="0"
+            ${!active ? 'disabled' : ''}>
         </td>
-        <td style="text-align:right;${totalClass}" class="total-cell">${formatCurrency(totalAfter)}</td>
+        <td style="text-align:right;${totalStyle}" class="total-cell">${totalDisplay}</td>
       `;
       tbody.appendChild(tr);
-
-      footCash += cashToAdd;
-      footTotal += totalAfter;
     });
 
-    document.getElementById('footCashToAdd').textContent = formatCurrency(footCash);
-    document.getElementById('footTotalAfter').textContent = formatCurrency(footTotal);
     document.getElementById('footerRow').style.display = visibleIdx > 0 ? '' : 'none';
-
+    recalcFooter();
     updateSummary();
-    attachInputListeners();
+    attachListeners();
   }
 
-  function getInputValue(tid) {
-    const el = tbody.querySelector(`input[data-tid="${tid}"]`);
-    if (el) return Number(el.value) || 0;
-    if (tid in savedAmounts) return savedAmounts[tid];
-    const t = terminals.find(x => x.terminal_id === tid);
-    return t ? computeDefaultCashToAdd(t.suggested_cash_add) : 0;
-  }
-
-  function attachInputListeners() {
+  function attachListeners() {
     tbody.querySelectorAll('input.cash-input').forEach(inp => {
       inp.addEventListener('input', function () {
         const tid = this.dataset.tid;
-        savedAmounts[tid] = Number(this.value) || 0;
+        const val = Number(this.value) || 0;
+        savedAmounts[tid] = val === 0 ? '' : val;
         const tr = this.closest('tr');
         const t = terminals.find(x => x.terminal_id === tid);
-        const cashToAdd = savedAmounts[tid];
-        const totalAfter = (t.cash_remaining ?? 0) + cashToAdd;
+        const totalAfter = (t.cash_remaining ?? 0) + val;
         const totalCell = tr.querySelector('.total-cell');
-        totalCell.textContent = formatCurrency(totalAfter);
-        totalCell.style.cssText = cashToAdd > 0 && totalAfter < 4000
-          ? 'text-align:right;color:#dc2626;font-weight:700'
-          : 'text-align:right';
+        if (val > 0) {
+          totalCell.textContent = formatCurrency(totalAfter);
+          totalCell.style.cssText = totalAfter < 4000
+            ? 'text-align:right;color:#dc2626;font-weight:700'
+            : 'text-align:right';
+        } else {
+          totalCell.textContent = '—';
+          totalCell.style.cssText = 'text-align:right';
+        }
         recalcFooter();
         updateSummary();
+      });
+    });
+
+    tbody.querySelectorAll('select.status-select').forEach(sel => {
+      sel.addEventListener('change', function () {
+        const tid = this.dataset.tid;
+        const newStatus = this.value;
+        terminalStatuses[tid] = newStatus;
+        pendingStatusChanges[tid] = newStatus;
+
+        if (newStatus !== 'active') {
+          delete savedAmounts[tid];
+        }
+
+        // Debounce Supabase save
+        clearTimeout(window._statusSaveTimer);
+        window._statusSaveTimer = setTimeout(flushStatusChanges, 1500);
+
+        renderTable();
       });
     });
   }
 
   function recalcFooter() {
-    let footCash = 0, footTotal = 0;
-    tbody.querySelectorAll('tr').forEach(tr => {
-      const tid = tr.dataset.tid;
-      if (!tid) return;
-      const t = terminals.find(x => x.terminal_id === tid);
-      const cashToAdd = getInputValue(tid);
-      footCash += cashToAdd;
-      footTotal += (t.cash_remaining ?? 0) + cashToAdd;
+    let footCash = 0, footTotal = 0, hasAny = false;
+    terminals.forEach(t => {
+      if (!isActive(t.terminal_id)) return;
+      const el = tbody.querySelector(`input.cash-input[data-tid="${t.terminal_id}"]`);
+      const val = el ? (Number(el.value) || 0) : (savedAmounts[t.terminal_id] ? Number(savedAmounts[t.terminal_id]) : 0);
+      if (val > 0) {
+        hasAny = true;
+        footCash += val;
+        footTotal += (t.cash_remaining ?? 0) + val;
+      }
     });
-    document.getElementById('footCashToAdd').textContent = formatCurrency(footCash);
-    document.getElementById('footTotalAfter').textContent = formatCurrency(footTotal);
+    document.getElementById('footCashToAdd').textContent = hasAny ? formatCurrency(footCash) : '—';
+    document.getElementById('footTotalAfter').textContent = hasAny ? formatCurrency(footTotal) : '—';
   }
 
   function updateSummary() {
     let loading = 0, totalCash = 0;
     terminals.forEach(t => {
-      const v = getInputValue(t.terminal_id);
-      if (v > 0) { loading++; totalCash += v; }
+      if (!isActive(t.terminal_id)) return;
+      const el = tbody.querySelector(`input.cash-input[data-tid="${t.terminal_id}"]`);
+      const val = el ? (Number(el.value) || 0) : (savedAmounts[t.terminal_id] ? Number(savedAmounts[t.terminal_id]) : 0);
+      if (val > 0) { loading++; totalCash += val; }
     });
     document.getElementById('statLoading').textContent = loading;
     document.getElementById('statCash').textContent = '$' + totalCash.toLocaleString('en-US');
+  }
+
+  async function flushStatusChanges() {
+    const changes = Object.entries(pendingStatusChanges).map(([terminal_id, status]) => ({ terminal_id, status }));
+    if (!changes.length) return;
+    try {
+      await fetch('/api/terminal-status', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(changes),
+      });
+      Object.keys(pendingStatusChanges).forEach(k => delete pendingStatusChanges[k]);
+    } catch (err) {
+      console.warn('Could not save terminal statuses:', err);
+    }
   }
 
   function escHtml(s) {
@@ -209,26 +291,42 @@
 
   filterCheckbox.addEventListener('change', renderTable);
 
-  // Initialize saved amounts with defaults for any not yet touched
-  terminals.forEach(t => {
-    if (!(t.terminal_id in savedAmounts)) {
-      savedAmounts[t.terminal_id] = computeDefaultCashToAdd(t.suggested_cash_add);
+  // Load statuses from Supabase, then render
+  async function init() {
+    try {
+      const res = await fetch('/api/terminal-status');
+      if (res.ok) {
+        const data = await res.json();
+        data.forEach(r => { terminalStatuses[r.terminal_id] = r.status; });
+      }
+    } catch (err) {
+      console.warn('Could not load terminal statuses:', err);
     }
-  });
-
-  document.getElementById('infoBanner').textContent =
-    `${terminals.length} terminals loaded. Sorted by urgency. Adjust cash amounts as needed.`;
-
-  renderTable();
+    document.getElementById('infoBanner').textContent =
+      `${terminals.length} terminals loaded. Sorted by urgency. Enter cash amounts for active terminals.`;
+    renderTable();
+  }
 
   window.saveAndContinue = function () {
-    // Capture current input values before saving
+    // Flush any pending status saves first
+    clearTimeout(window._statusSaveTimer);
+    flushStatusChanges();
+
+    // Capture current input values; inactive/seasonal get 0
     tbody.querySelectorAll('input.cash-input').forEach(inp => {
-      savedAmounts[inp.dataset.tid] = Number(inp.value) || 0;
+      const tid = inp.dataset.tid;
+      savedAmounts[tid] = isActive(tid) ? (Number(inp.value) || 0) : 0;
     });
+    // Also zero out any not rendered (inactive from DB but not in DOM)
+    terminals.forEach(t => {
+      if (!isActive(t.terminal_id)) savedAmounts[t.terminal_id] = 0;
+    });
+
     saveToSession(STORAGE_KEYS.CASH_AMOUNTS, savedAmounts);
     window.location.href = '/step3';
   };
+
+  init();
 })();
 </script>
 
