@@ -6,6 +6,25 @@
   <title>ATM Cash POS — Step 3: Assign Drivers</title>
   <link rel="stylesheet" href="/static/style.css">
   <script src="/static/utils.js"></script>
+  <style>
+    .bulk-bar {
+      background: #1e3a5f;
+      border-radius: 8px;
+      padding: 10px 16px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 12px;
+      flex-wrap: wrap;
+    }
+    .bulk-bar .bulk-count {
+      font-size: 0.88rem;
+      font-weight: 600;
+      color: #fff;
+      white-space: nowrap;
+    }
+    .row-selected { outline: 2px solid #3b74d8; outline-offset: -2px; background: #eff6ff !important; }
+  </style>
 </head>
 <body>
 
@@ -55,10 +74,23 @@
 
     <!-- Terminal assignment table -->
     <div>
+      <!-- Bulk assignment bar (visible when rows are selected) -->
+      <div class="bulk-bar" id="bulkBar" style="display:none">
+        <span class="bulk-count" id="bulkCount">0 selected</span>
+        <select id="bulkDriverSelect" class="city-select" style="max-width:200px">
+          <option value="">— Choose driver —</option>
+        </select>
+        <button class="btn-primary" style="padding:7px 14px;font-size:0.85rem" onclick="applyBulkAssign()">Assign</button>
+        <button class="btn-secondary" style="padding:7px 14px;font-size:0.85rem" onclick="clearSelection()">Clear</button>
+      </div>
+
       <div class="table-wrap">
         <table class="data-table" id="terminalTable">
           <thead>
             <tr>
+              <th data-no-sort style="width:36px;text-align:center">
+                <input type="checkbox" id="selectAll" title="Select all">
+              </th>
               <th>Terminal ID</th>
               <th>Site Name</th>
               <th>City</th>
@@ -94,6 +126,7 @@
   let terminalAssignments = loadFromSession(STORAGE_KEYS.TERMINAL_ASSIGNMENTS) || {};
 
   let allDrivers = [];
+  const selectedTids = new Set();
 
   // Only terminals with cash to load, sorted by city then site name
   const activeTerminals = terminals
@@ -116,7 +149,6 @@
 
       if (taRes.ok) {
         const taData = await taRes.json();
-        // Merge: session wins on conflicts
         taData.forEach(ta => {
           if (!(ta.terminal_id in terminalAssignments)) {
             terminalAssignments[ta.terminal_id] = ta.driver_id;
@@ -153,12 +185,12 @@
           if (!driverSelection.includes(d.id)) driverSelection.push(d.id);
         } else {
           driverSelection = driverSelection.filter(x => x !== d.id);
-          // Clear assignments for this driver
           Object.keys(terminalAssignments).forEach(tid => {
             if (terminalAssignments[tid] === d.id) terminalAssignments[tid] = null;
           });
         }
         renderTerminalTable();
+        updateBulkBar();
         updateSummary();
       });
       container.appendChild(div);
@@ -175,9 +207,12 @@
       const assignedId = terminalAssignments[t.terminal_id] || '';
       const validAssigned = activeDrivers.find(d => d.id === assignedId) ? assignedId : '';
       const isUnassigned = !validAssigned;
+      const isSelected = selectedTids.has(t.terminal_id);
 
       const tr = document.createElement('tr');
-      if (isUnassigned) tr.className = 'unassigned-city';
+      tr.dataset.tid = t.terminal_id;
+      if (isSelected) tr.classList.add('row-selected');
+      else if (isUnassigned) tr.classList.add('unassigned-city');
 
       let options = '<option value="">— Unassigned —</option>';
       activeDrivers.forEach(d => {
@@ -185,6 +220,9 @@
       });
 
       tr.innerHTML = `
+        <td style="text-align:center">
+          <input type="checkbox" class="row-cb" data-tid="${t.terminal_id}" ${isSelected ? 'checked' : ''}>
+        </td>
         <td><code>${t.terminal_id}</code></td>
         <td>${escHtml(t.site_name)}</td>
         <td>${toTitleCase(t.city)}</td>
@@ -198,20 +236,117 @@
           </select>
         </td>
       `;
+
+      tr.querySelector('.row-cb').addEventListener('change', function () {
+        if (this.checked) selectedTids.add(t.terminal_id);
+        else selectedTids.delete(t.terminal_id);
+        tr.classList.toggle('row-selected', this.checked);
+        if (!this.checked && isUnassigned) tr.classList.add('unassigned-city');
+        syncSelectAll();
+        updateBulkBar();
+      });
+
       tr.querySelector('select').addEventListener('change', function () {
         terminalAssignments[t.terminal_id] = this.value || null;
-        tr.className = this.value ? '' : 'unassigned-city';
+        const assigned = !!this.value;
+        tr.classList.toggle('unassigned-city', !assigned && !selectedTids.has(t.terminal_id));
         updateSummary();
       });
+
       tbody.appendChild(tr);
     });
+    syncSelectAll();
     updateSummary();
   }
+
+  // Select-all checkbox
+  document.getElementById('selectAll').addEventListener('change', function () {
+    const rows = document.querySelectorAll('#terminalBody tr');
+    rows.forEach(tr => {
+      const tid = tr.dataset.tid;
+      const cb = tr.querySelector('.row-cb');
+      if (!cb) return;
+      if (this.checked) {
+        selectedTids.add(tid);
+        tr.classList.add('row-selected');
+        tr.classList.remove('unassigned-city');
+      } else {
+        selectedTids.delete(tid);
+        tr.classList.remove('row-selected');
+        const assignedId = terminalAssignments[tid];
+        const activeDrivers = allDrivers.filter(d => driverSelection.includes(d.id));
+        if (!assignedId || !activeDrivers.find(d => d.id === assignedId)) {
+          tr.classList.add('unassigned-city');
+        }
+      }
+      cb.checked = this.checked;
+    });
+    updateBulkBar();
+  });
+
+  function syncSelectAll() {
+    const cbs = Array.from(document.querySelectorAll('#terminalBody .row-cb'));
+    const allChecked = cbs.length > 0 && cbs.every(cb => cb.checked);
+    const someChecked = cbs.some(cb => cb.checked);
+    const sa = document.getElementById('selectAll');
+    sa.checked = allChecked;
+    sa.indeterminate = !allChecked && someChecked;
+  }
+
+  function updateBulkBar() {
+    const count = selectedTids.size;
+    const bar = document.getElementById('bulkBar');
+    bar.style.display = count > 0 ? 'flex' : 'none';
+    document.getElementById('bulkCount').textContent =
+      `${count} terminal${count !== 1 ? 's' : ''} selected`;
+
+    // Rebuild bulk driver dropdown
+    const sel = document.getElementById('bulkDriverSelect');
+    const prev = sel.value;
+    sel.innerHTML = '<option value="">— Choose driver —</option>';
+    allDrivers.filter(d => driverSelection.includes(d.id)).forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = d.name;
+      if (d.id === prev) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  }
+
+  window.applyBulkAssign = function () {
+    const driverId = document.getElementById('bulkDriverSelect').value || null;
+    selectedTids.forEach(tid => {
+      terminalAssignments[tid] = driverId;
+      const tr = document.querySelector(`#terminalBody tr[data-tid="${tid}"]`);
+      if (tr) {
+        const sel = tr.querySelector('select.city-select');
+        if (sel) sel.value = driverId || '';
+        tr.classList.toggle('unassigned-city', !driverId);
+      }
+    });
+    clearSelection();
+    updateSummary();
+  };
+
+  window.clearSelection = function () {
+    selectedTids.clear();
+    document.querySelectorAll('#terminalBody .row-cb').forEach(cb => { cb.checked = false; });
+    document.querySelectorAll('#terminalBody tr.row-selected').forEach(tr => {
+      tr.classList.remove('row-selected');
+      const tid = tr.dataset.tid;
+      const assignedId = terminalAssignments[tid];
+      const activeDrivers = allDrivers.filter(d => driverSelection.includes(d.id));
+      if (!assignedId || !activeDrivers.find(d => d.id === assignedId)) {
+        tr.classList.add('unassigned-city');
+      }
+    });
+    syncSelectAll();
+    updateBulkBar();
+  };
 
   function updateSummary() {
     const activeDrivers = allDrivers.filter(d => driverSelection.includes(d.id));
     document.getElementById('statDrivers').textContent = activeDrivers.length;
-
     const unassigned = activeTerminals.filter(t => {
       const aid = terminalAssignments[t.terminal_id];
       return !aid || !activeDrivers.find(d => d.id === aid);
@@ -231,6 +366,7 @@
       });
       renderDriverPanel();
       renderTerminalTable();
+      updateBulkBar();
     } catch (err) {
       alert('Error: ' + err.message);
     }
@@ -265,6 +401,7 @@
       nameInput.value = '';
       renderDriverPanel();
       renderTerminalTable();
+      updateBulkBar();
     } catch (err) {
       errEl.textContent = err.message;
       errEl.style.display = 'block';
@@ -272,7 +409,6 @@
   });
 
   window.saveAndPreview = async function () {
-    // Capture any unsaved dropdown changes
     document.querySelectorAll('#terminalBody select.city-select').forEach(sel => {
       terminalAssignments[sel.dataset.tid] = sel.value || null;
     });
@@ -280,7 +416,6 @@
     saveToSession(STORAGE_KEYS.DRIVER_SELECTION, driverSelection);
     saveToSession(STORAGE_KEYS.TERMINAL_ASSIGNMENTS, terminalAssignments);
 
-    // Persist to Supabase
     const payload = Object.entries(terminalAssignments).map(([terminal_id, driver_id]) => ({
       terminal_id,
       driver_id: driver_id || null,
