@@ -186,7 +186,7 @@ def build_pdf(drivers_data, report_date):
     pdf.set_auto_page_break(auto=True, margin=18)
     pdf.set_margins(15, 15, 15)
 
-    COL_W = [30, 66, 30, 20, 28, 30]  # total ~204 mm (A4 portrait body)
+    COL_W = [28, 62, 26, 18, 24, 22]  # total 180 mm = A4 210 - 15mm margins each side
 
     def draw_table_header(pdf):
         headers = ['Terminal ID', 'Site Name', 'City', 'Days Left', 'Remaining', 'Cash to Add']
@@ -264,7 +264,7 @@ def build_pdf(drivers_data, report_date):
     pdf.cell(0, 6, report_date, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
     pdf.ln(6)
 
-    SUM_W = [90, 40, 70]
+    SUM_W = [90, 35, 55]  # total 180 mm
     sum_headers = ['Driver', 'Terminals', 'Total Cash to Load']
     pdf.set_fill_color(26, 43, 74)
     pdf.set_text_color(255, 255, 255)
