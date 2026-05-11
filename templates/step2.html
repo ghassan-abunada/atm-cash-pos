@@ -152,7 +152,7 @@
       if (hideRow) return;
 
       visibleIdx++;
-      const cashVal = active ? (savedAmounts[t.terminal_id] ?? '') : '';
+      const cashVal = active ? (savedAmounts[t.terminal_id] ?? 0) : 0;
       const cashNum = active ? (Number(cashVal) || 0) : 0;
       const totalAfter = (t.cash_remaining ?? 0) + cashNum;
       const totalDisplay = cashNum > 0 ? formatCurrency(totalAfter) : '—';
@@ -184,7 +184,7 @@
         <td style="text-align:right">${active ? formatCurrency(t.suggested_cash_add) : '—'}</td>
         <td>
           <input type="number" class="cash-input" data-tid="${t.terminal_id}"
-            value="${cashVal}" min="0" step="500" placeholder="0"
+            value="${cashVal}" min="0" step="500"
             ${!active ? 'disabled' : ''}>
         </td>
         <td style="text-align:right;${totalStyle}" class="total-cell">${totalDisplay}</td>
