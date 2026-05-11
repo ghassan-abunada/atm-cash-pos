@@ -85,17 +85,20 @@
 <script>
 (function () {
   if (!guardStep(STORAGE_KEYS.TERMINALS, '/')) return;
+  if (!guardStep(STORAGE_KEYS.CASH_AMOUNTS, '/step2')) return;
 
   const terminals = loadFromSession(STORAGE_KEYS.TERMINALS);
+  const cashAmounts = loadFromSession(STORAGE_KEYS.CASH_AMOUNTS) || {};
   let driverSelection = loadFromSession(STORAGE_KEYS.DRIVER_SELECTION) || [];
   let cityAssignments = loadFromSession(STORAGE_KEYS.CITY_ASSIGNMENTS) || {};
 
   let allDrivers = [];  // [{id, name}] from Supabase
 
-  // Build unique cities from session
+  // Only include cities where at least one terminal has cash to load
   const cityMap = {};
   terminals.forEach(t => {
     if (!t.city_key) return;
+    if (!(cashAmounts[t.terminal_id] > 0)) return;
     if (!cityMap[t.city_key]) cityMap[t.city_key] = { city_key: t.city_key, display: toTitleCase(t.city), count: 0 };
     cityMap[t.city_key].count++;
   });
